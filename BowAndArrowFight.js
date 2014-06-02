@@ -1,12 +1,13 @@
-/*************************************************************************
-## BowAndArrowFight mini-game (derived from snowball fight)
-
-    /js new Game_BowAndArrowFight(60).start();
-
-***/
-
+// ======================================================================
+//
+// BowAndArrowFight mini-game (derived from snowball fight)
+//
+//   /js new BowAndArrowFight(60).start();
+//
+// ======================================================================
 var bkGameMode = org.bukkit.GameMode,
 bkEntityDamageByEntityEvent = org.bukkit.event.entity.EntityDamageByEntityEvent,
+bkBlockDamageEvent = org.bukkit.event.block.BlockDamageEvent,
 bkItemStack = org.bukkit.inventory.ItemStack,
 bkMaterial = org.bukkit.Material,
 bkArrow = org.bukkit.entity.Arrow;
@@ -28,7 +29,6 @@ var _startGame = function( gameState ) {
     for ( i = 10; i < gameState.duration; i += 10 ) {
         gameState.ammo.push( gameState.ammo[ 0 ] );
     }
-
     for ( teamName in gameState.teams ) {
         gameState.teamScores[teamName] = 0;
         team = gameState.teams[ teamName ];
@@ -41,9 +41,9 @@ var _startGame = function( gameState ) {
         }
     }
 };
-/*
- end the game
- */
+// ======================================================================
+// end the game
+// ======================================================================
 var _endGame = function( gameState ) {
     var scores = [],
     leaderBoard = [],
@@ -67,20 +67,23 @@ var _endGame = function( gameState ) {
     for ( teamName in gameState.teams ) {
         team = gameState.teams[teamName];
         for ( i = 0; i < team.length; i++ ) {
-            // restore player's previous game mode and take back snowballs
+            // restore player's previous game mode and take back bow & arrows
             player = server.getPlayer( team[i] );
             player.gameMode = gameState.savedModes[ player.name ];
             player.inventory.removeItem( gameState.ammo );
+            player.inventory.removeItem( gameState.bow );
             player.sendMessage( 'GAME OVER.' );
             player.sendMessage( scores );
         }
     }
     gameState.listener.unregister();
+    gameState.listener2.unregister();
     gameState.inProgress = false;
 };
-/*
- get the team the player belongs to
- */
+
+// ======================================================================
+// get the team the player belongs to
+// ======================================================================
 var _getTeam = function( player, pteams ) {
     var teamName,
     team,
@@ -95,15 +98,15 @@ var _getTeam = function( player, pteams ) {
     }
     return null;
 };
-/*
- construct a new game
- */
+
+// ======================================================================
+// construct a new game & return map with a start function
+// ======================================================================
 var createGame = function( duration, teams ) {
     var players,
     i,
     _snowBalls = new bkItemStack( bkMaterial.ARROW, 64 ),
-    _bow = new bkItemStack( bkMaterial.BOW, 1)
-    ;
+    _bow = new bkItemStack( bkMaterial.BOW, 1);
 
     var _gameState = {
         teams: teams,
@@ -112,6 +115,7 @@ var createGame = function( duration, teams ) {
         inProgress: false,
         teamScores: {},
         listener: null,
+        listener2: null,
         savedModes: {},
         ammo: [ _snowBalls ],
         bow: [ _bow ]
@@ -120,9 +124,6 @@ var createGame = function( duration, teams ) {
         duration = 60;
     }
     if ( typeof teams == 'undefined' ) {
-        /*
-          wph 20130511 use all players
-        */
         teams =  [];
         players = server.onlinePlayers;
         for ( i = 0; i < players.length; i++ ) {
@@ -130,8 +131,10 @@ var createGame = function( duration, teams ) {
         }
     }
     //
-    // allow for teams param to be either {red:['player1','player2'],blue:['player3']} or
-    // ['player1','player2','player3'] if all players are against each other (no teams)
+    // allow for teams param to be either
+    // {red:['player1','player2'],blue:['player3']} or
+    // ['player1','player2','player3'] if all players are against each
+    // other (no teams)
     //
     if ( teams instanceof Array ) {
         _gameState.teams = {};
@@ -140,9 +143,10 @@ var createGame = function( duration, teams ) {
         }
     }
     /*
-      this function is called every time a player is damaged by another entity/player
+      this function is called every time a player is damaged by
+      another entity/player
     */
-    var _onArrowHit = function( event ) {
+    var _onDamage = function( event ) {
         var arrow = event.damager;
         if ( !arrow || !( arrow instanceof bkArrow ) ) {
             return;
@@ -158,11 +162,25 @@ var createGame = function( duration, teams ) {
             _gameState.teamScores[ throwersTeam ]--;
         }
     };
+    // this isn't quite working yet.  FIXME
+    // want this to eventually score points when arrow hits wood
+    var _onBlockDamage = function( event ) {
+        var arrow = event.damager;
+        if ( !arrow || !( arrow instanceof bkArrow ) ) {
+            return;
+        }
+        var throwersTeam = _getTeam( arrow.shooter, _gameState.teams );
+        _gameState.teamScores[ throwersTeam ]++;
+    };
 
     return {
         start: function( ) {
             _startGame( _gameState );
-            _gameState.listener = events.on(bkEntityDamageByEntityEvent,_onArrowHit);
+            _gameState.listener = events.on(bkEntityDamageByEntityEvent,
+                                            _onDamage);
+            _gameState.listener2 = events.on(bkBlockDamageEvent,
+                                            _onBlockDamage);
+
             new java.lang.Thread( function( ) {
                 while ( _gameState.duration-- ) {
                     java.lang.Thread.sleep( 1000 ); // sleep 1,000 millisecs (1 second)
@@ -172,4 +190,59 @@ var createGame = function( duration, teams ) {
         }
     };
 };
-exports.Game_BowAndArrowFight = createGame;
+exports.BowAndArrowFight = createGame;
+
+// ======================================================================
+// construct a new game arena
+// ======================================================================
+exports.createGameArena = function() {
+    var tmp = this;
+    var arenaRadius = 20;
+    var arenaHeight = 10;
+    var skirt = 3;
+    var goalProbability = 0.25;
+    // cylinder draws from the corner, not from the center.
+    tmp.back(skirt).left(skirt).
+        box(blocks.air,2*arenaRadius+2*skirt,arenaHeight+skirt,2*arenaRadius+2*skirt);
+    tmp.down(1)
+        .box(blocks.iron,2*arenaRadius,1,2*arenaRadius)
+        .up(arenaHeight+1)
+        .box(blocks.glass,2*arenaRadius,1,2*arenaRadius)
+        .down(arenaHeight)
+        .cylinder0(blocks.iron,arenaRadius,arenaHeight)
+        .right(arenaRadius-1)
+        .box(blocks.air,2,3,1)
+        .fwd(2*arenaRadius)
+        .box(blocks.air,2,3,1);
+    // center obstacles
+    tmp = this;
+    tmp = tmp.fwd(arenaRadius/2).right(arenaRadius/2);
+    for(var i = 0; i < arenaRadius; i += 3) {
+        tmp.chkpt('chk1');
+        for(var j = 0; j < arenaRadius; j += 3) {
+            tmp = tmp.box(blocks.iron,1,10,1)
+                .fwd(3);
+        }
+        tmp = tmp.move('chk1').right(3);
+    }
+    // center chunks of wood as goals
+    tmp = this;
+    tmp = tmp.fwd(arenaRadius/2).right(arenaRadius/2);
+    for(var i = 0; i < arenaRadius; i += 3) {
+        tmp.chkpt('chk1');
+        for(var j = 0; j < arenaRadius; j += 3) {
+            if(Math.random() < goalProbability) {
+                var h = Math.floor(Math.random() * (arenaHeight/2 - 1)) +
+                    arenaHeight/2;
+                tmp = tmp.up(h)
+                    .box(blocks.wood,1,1,1)
+                    .down(h)
+                    .fwd(3);
+            } else {
+                tmp = tmp.fwd(3);
+            }
+        }
+        tmp = tmp.move('chk1').right(3);
+    }
+
+};
